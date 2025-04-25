@@ -51,7 +51,7 @@ def clean_date(raw_date):
 def update_excel(data, filename="expenses.xlsx"):
     date = clean_date(data.get("date", "today"))
     time = datetime.now().strftime("%H:%M:%S")  # Add current time
-    amount = float(data.get("amount", "0").replace("₹", "").strip())
+    amount = float(data.get("amount", "0").replace("$", "").replace(",", "").strip())
     category = data.get("category", "other")
     month = date.strftime("%B %Y")
     description = data.get("description", "")  # Default to empty string if not provided
@@ -80,5 +80,5 @@ def load_agent(filename="expenses.xlsx"):
         return None
 
     df = pd.read_excel(filename)
-    agent = create_pandas_dataframe_agent(llm, df, verbose=False)
+    agent = create_pandas_dataframe_agent(llm, df, verbose=False, allow_dangerous_code=True)
     return agent

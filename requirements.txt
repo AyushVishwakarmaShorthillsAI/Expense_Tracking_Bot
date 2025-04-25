@@ -4,4 +4,4 @@ langchain-experimental
 pandas
 openpyxl
 dateparser
-
+tabulate
