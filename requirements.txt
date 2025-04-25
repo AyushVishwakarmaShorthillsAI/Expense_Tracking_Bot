@@ -1,0 +1,7 @@
+langchain-cohere
+transformers
+langchain-experimental
+pandas
+openpyxl
+dateparser
+
