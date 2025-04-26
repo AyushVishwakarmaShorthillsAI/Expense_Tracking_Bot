@@ -3,17 +3,24 @@ from langchain.prompts import PromptTemplate
 from dotenv import load_dotenv
 import os
 
-# Load environment variables from .env file
 load_dotenv()
 
-# Initialize the Cohere LLM
-llm = ChatCohere(model="command", temperature=0.7)
+llm = ChatCohere(model="command", temperature=0)
 
-# Define the prompt with 'query' as the expected variable
 prompt = PromptTemplate(
-    input_variables=["query"], 
-    template="You are a helpful assistant. Your task is to process the following request: {query}. Respond with a structured output like: Date: [date]\nAmount: [amount]\nCategory: [category]"
+    input_variables=["query"],
+    template="""
+    You are a helpful assistant. Your task is to process the following request: {query}. 
+    Extract the following details:
+    - Date: Identify any date mentioned in the input (e.g., "2025-04-25", "25 April 2025", "yesterday", "today"). If no date is explicitly mentioned, leave it blank for the system to handle.
+    - Amount: Extract the monetary amount (e.g., "120", "$120").
+    - Category: Identify the category if mentioned (e.g., "clothing"). If not mentioned, use "other".
+
+    Respond with a structured output like:
+    Date: [date or blank if not mentioned]
+    Amount: [number]
+    Category: [category]
+    """
 )
 
-# Use the prompt with the Cohere LLM
 chain = prompt | llm
