@@ -5,6 +5,7 @@ import os
 
 load_dotenv()
 
+# set temp as 0 for accurate outputs
 llm = ChatCohere(model="command", temperature=0)
 
 prompt = PromptTemplate(

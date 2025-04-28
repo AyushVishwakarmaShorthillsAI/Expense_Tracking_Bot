@@ -84,22 +84,31 @@ def load_agent(filename="expenses.xlsx"):
     df = pd.read_excel(filename)
     df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
     df['Category'] = df['Category'].astype(str).str.strip().str.lower()
-    df['Month'] = df['Month'].astype(str).str.strip()
+    df['Month'] = df['Month'].astype(str).str.strip().str.title()
     print("Loaded DataFrame:\n", df)
 
     custom_prompt = """
-    You are a data analyst working with a pandas DataFrame containing expense data. The DataFrame has columns: Date (datetime), Time, Category, Amount, Month, and Description. The Date column is in datetime format (YYYY-MM-DD), and the Month column is in string format (e.g., 'April 2025'). The Category column is in lowercase string format.
+    You are a data analyst working with a pandas DataFrame containing expense data. The DataFrame has columns: Date (datetime), Time, Category, Amount, Month, and Description. The Date column is in datetime format (YYYY-MM-DD), the Month column is in title case string format (e.g., 'April 2025'), and the Category column is in lowercase string format (e.g., 'food').
 
-    For queries involving categories and months, filter the DataFrame using string comparisons with the `&` operator for multiple conditions. For example:
-    - To find the total amount spent on category 'technology' in April 2025, use:
-      total = df[(df['Category'] == 'technology') & (df['Month'] == 'April 2025')]['Amount'].sum()
-      print(total)
+    For queries:
+    - If the query asks for a total amount by month (e.g., 'total amount spent in April 2025'), use:
+      df[df['Month'] == 'April 2025']['Amount'].sum()
+    - If the query asks for a total amount by category and month (e.g., 'total amount spent on technology in April 2025'), use:
+      df[(df['Category'] == 'technology') & (df['Month'] == 'April 2025')]['Amount'].sum()
+    - If the query asks for all records by month (e.g., 'show all expenses for September 2025'), use:
+      df[df['Month'] == 'September 2025'].to_string(index=False)
+    - If the query asks for a total amount for multiple categories (e.g., 'total amount spent on clothing and technology'), use:
+      df[df['Category'].isin(['clothing', 'technology'])]['Amount'].sum()
 
     Answer the following question: {input}
 
-    Provide the answer as a single number (the total amount) or a clear statement if no data is found (e.g., 'No expenses found for category technology in April 2025'). Do not read from files, generate sample DataFrames, or overcomplicate the logic. Use the provided DataFrame (`df`) directly. Ensure all conditions are enclosed in parentheses and use `&` for combining conditions.
-    """
+    Provide the answer directly as a number (for totals) or the filtered DataFrame as a string (for records). If no data is found, state 'No expenses found matching the criteria.' Use the provided DataFrame (`df`) directly. Ensure all conditions are enclosed in parentheses and use `&` for combining conditions or `|` for OR conditions within `isin`.
 
+    When using the `python_repl_ast` tool, provide a **single-line** expression that evaluates to the final result. Do NOT use multi-line code, variable assignments, or print statements. Ensure there are no trailing characters like 'O' or extra spaces in the Action Input. For example:
+    Action: python_repl_ast
+    Action Input: df[df['Month'] == 'April 2025']['Amount'].sum()
+    """
+    
     agent = create_pandas_dataframe_agent(
         llm,
         df,
