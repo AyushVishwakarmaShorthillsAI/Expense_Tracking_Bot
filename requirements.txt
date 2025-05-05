@@ -5,3 +5,5 @@ pandas
 openpyxl
 dateparser
 tabulate
+plotly
+streamlit

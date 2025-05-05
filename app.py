@@ -171,7 +171,7 @@ if page == "Home":
 elif page == "Add Expense":
     st.header("Add Expense")
     with st.form("expense_form"):
-        user_input = st.text_input("Expense Details (e.g., 'Spent ₹50 on food yesterday')")
+        user_input = st.text_input("Amount")
         category = st.text_input("Category (e.g., food, travel)")
         description = st.text_area("Description")
         submitted = st.form_submit_button("Add Expense")
