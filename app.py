@@ -19,6 +19,7 @@ from langchain.agents.agent_toolkits import SQLDatabaseToolkit
 from langchain_community.utilities import SQLDatabase
 from sqlalchemy import create_engine
 import urllib.parse # Import for URL encoding
+import psycopg2 # Import psycopg2 for specific exception handling
 
 # --- Database Setup (Supabase) ---
 
@@ -142,7 +143,7 @@ def register_user_db(username, name, hashed_password):
 
 # --- LLM Setup ---
 load_dotenv()
-llm = ChatCohere(model="command", temperature=0)
+llm = ChatCohere(model="command", temperature=0.2)
 prompt = PromptTemplate(
     input_variables=["query"],
     template="""
@@ -255,41 +256,60 @@ def add_expense_record(user_id, expense_data):
 
 def get_db_engine():
     """Creates SQLAlchemy engine for Supabase connection."""
-    db_host = st.secrets.get("supabase", {}).get("db_host")
-    db_port = st.secrets.get("supabase", {}).get("db_port")
-    db_password = st.secrets.get("supabase", {}).get("db_password")
+    db_host_raw = st.secrets.get("supabase", {}).get("db_host")
+    db_port_secret = st.secrets.get("supabase", {}).get("db_port") # Renamed to avoid confusion
+    db_password_raw = st.secrets.get("supabase", {}).get("db_password")
 
-    if not db_host or not db_port or not db_password:
+    if not db_host_raw or not db_port_secret or not db_password_raw:
         st.error("Database host, port, or password not found in secrets. Please add db_host, db_port, and db_password under [supabase].")
         return None
 
-    # URL-encode the password to handle special characters
     try:
-        encoded_password = urllib.parse.quote_plus(db_password)
+        # URL-encode the password AND the host
+        encoded_password = urllib.parse.quote_plus(db_password_raw)
+        encoded_db_host = urllib.parse.quote_plus(db_host_raw)
     except Exception as e:
-        st.error(f"Failed to URL-encode database password: {e}")
+        st.error(f"Failed to URL-encode database credentials or host: {e}")
         return None
 
-    # Construct the PostgreSQL connection string with the encoded password
-    connection_string = f"postgresql+psycopg2://postgres:{encoded_password}@{db_host}:{db_port}/postgres"
+    # Construct the PostgreSQL connection string
+    # User manually changed to port 5432 in a previous step, we'll use that directly here.
+    # The db_port_secret is kept for debugging clarity if needed.
+    connection_port = 6543 # As per user's manual change observed
+    connection_string = f"postgresql://postgres.xupvavqdvunalnpxqlxa:{db_password_raw}@{db_host_raw}:6543/postgres"
 
     # Debugging prints
     print("--- Database Connection Details ---")
-    print(f"Host from secrets: {db_host}")
-    print(f"Port from secrets: {db_port}")
-    print(f"Password from secrets: *** MASKED ***") # Mask password in logs
+    print(f"Raw Host from secrets: {db_host_raw}")
+    print(f"Encoded Host: {encoded_db_host}")
+    print(f"Port from secrets (db_port): {db_port_secret}")
+    print(f"Port used in connection string: {connection_port}")
+    print(f"Password from secrets: *** MASKED ***")
     print(f"Encoded Password: *** MASKED ***")
-    # print(f"Attempting Connection String: postgresql+psycopg2://postgres:{encoded_password}@{db_host}:{db_port}/postgres") # careful logging full string
+    # Print the final connection string (masking password for safety)
+    masked_connection_string = f"postgresql://postgres:*****@{encoded_db_host}:{connection_port}/postgres"
+    print(f"Attempting Connection With String: {masked_connection_string}")
     print("---------------------------------")
 
     try:
+        print(f"DEBUG: About to create engine with string: {connection_string}") # Full string for debugging
         engine = create_engine(connection_string)
+        print("DEBUG: Engine object created (or at least no immediate error).")
         connection = engine.connect()
+        print("DEBUG: Successfully connected to the database via engine.connect().")
         connection.close()
         print("Database connection successful!")
         return engine
+    except psycopg2.OperationalError as op_err: # Specific catch for psycopg2 operational errors
+        st.error(f"Failed to create database engine (OperationalError): {op_err}")
+        print(f"DEBUG: psycopg2.OperationalError: {op_err}")
+        print(f"DEBUG: Connection string used: postgresql://postgres:MASKED_PASSWORD@{encoded_db_host}:{connection_port}/postgres")
+        return None
     except Exception as e:
         st.error(f"Failed to create database engine: {e}")
+        print(f"DEBUG: General Exception type: {type(e).__name__}")
+        print(f"DEBUG: General Exception details: {e}")
+        print(f"DEBUG: Connection string used (general exception): postgresql://postgres:MASKED_PASSWORD@{encoded_db_host}:{connection_port}/postgres")
         return None
 
 # Function to initialize the SQL agent for the current user
@@ -312,7 +332,7 @@ Unless the user specifies a specific number of examples they wish to obtain, alw
 You can order the results by a relevant column to return the most interesting examples in the database.
 Never query for all the columns from a specific table, only ask for the relevant columns given the question.
 
-You have access to the following tables: {db.get_table_names()}
+You have access to the following tables: {db.get_usable_table_names()}
 
 **VERY IMPORTANT**: You MUST filter your query based on the user making the request. The current user's ID is '{user_id}'.
 **ALL queries to the 'expense' table MUST include `WHERE user_id = '{user_id}'`**.
@@ -324,13 +344,11 @@ SQLQuery: SELECT sum(amount) FROM expense WHERE category = 'food' AND date >= cu
 Question: Show my last 3 expenses
 SQLQuery: SELECT date, category, amount, description FROM expense WHERE user_id = '{user_id}' ORDER BY date DESC, time DESC LIMIT 3;
 
-Only use the following tables: {db.get_table_names()}
-
-Question: {{input}}
+Only use the following tables: {db.get_usable_table_names()}
 """
 
-    # Use str.format to insert the user_id into the prefix
-    formatted_prefix = sql_prefix.format(user_id=user_id, db=db)
+    # The sql_prefix f-string is already fully formatted with user_id and table names.
+    formatted_prefix = sql_prefix
 
     try:
         toolkit = SQLDatabaseToolkit(db=db, llm=llm)
