@@ -10,5 +10,6 @@ openpyxl
 supabase-py
 bcrypt
 SQLAlchemy
+psycopg2
 psycopg2-binary
 langchain-community

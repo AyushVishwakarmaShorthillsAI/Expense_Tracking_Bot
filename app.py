@@ -18,6 +18,7 @@ from langchain.agents import create_sql_agent
 from langchain.agents.agent_toolkits import SQLDatabaseToolkit
 from langchain_community.utilities import SQLDatabase
 from sqlalchemy import create_engine
+import urllib.parse # Import for URL encoding
 
 # --- Database Setup (Supabase) ---
 
@@ -254,28 +255,41 @@ def add_expense_record(user_id, expense_data):
 
 def get_db_engine():
     """Creates SQLAlchemy engine for Supabase connection."""
-    # Construct the PostgreSQL connection string
-    # Assumes standard Supabase structure: postgresql://postgres:[PASSWORD]@[HOST]:5432/postgres
-    # We need the database password from secrets
-    db_host = SUPABASE_URL.split('@')[-1] # Extract host from URL
+    db_host = st.secrets.get("supabase", {}).get("db_host")
+    db_port = st.secrets.get("supabase", {}).get("db_port")
     db_password = st.secrets.get("supabase", {}).get("db_password")
 
-    if not db_password:
-        st.error("Database password (db_password) not found in secrets. Cannot connect SQL Agent.")
+    if not db_host or not db_port or not db_password:
+        st.error("Database host, port, or password not found in secrets. Please add db_host, db_port, and db_password under [supabase].")
         return None
 
-    # Use 'postgres' as username and db name by default for Supabase
-    connection_string = f"postgresql+psycopg2://postgres:{db_password}@{db_host}/postgres"
+    # URL-encode the password to handle special characters
+    try:
+        encoded_password = urllib.parse.quote_plus(db_password)
+    except Exception as e:
+        st.error(f"Failed to URL-encode database password: {e}")
+        return None
+
+    # Construct the PostgreSQL connection string with the encoded password
+    connection_string = f"postgresql+psycopg2://postgres:{encoded_password}@{db_host}:{db_port}/postgres"
+
+    # Debugging prints
+    print("--- Database Connection Details ---")
+    print(f"Host from secrets: {db_host}")
+    print(f"Port from secrets: {db_port}")
+    print(f"Password from secrets: *** MASKED ***") # Mask password in logs
+    print(f"Encoded Password: *** MASKED ***")
+    # print(f"Attempting Connection String: postgresql+psycopg2://postgres:{encoded_password}@{db_host}:{db_port}/postgres") # careful logging full string
+    print("---------------------------------")
+
     try:
         engine = create_engine(connection_string)
-        # Test connection
         connection = engine.connect()
         connection.close()
         print("Database connection successful!")
         return engine
     except Exception as e:
         st.error(f"Failed to create database engine: {e}")
-        print(f"Connection String Attempted: postgresql+psycopg2://postgres:*****@{db_host}/postgres")
         return None
 
 # Function to initialize the SQL agent for the current user
@@ -499,8 +513,8 @@ elif st.session_state.get('authentication_status'):
     elif page == "Add Expense":
         st.header("Add Expense")
         with st.form("expense_form"):
-            expense_input_text = st.text_input("Enter expense details (e.g., '150 for food yesterday', 'coffee 5 today')")
-            category_override = st.text_input("Category (optional, overrides detected)")
+            expense_input_text = st.text_input("Amount")
+            category_override = st.text_input("Category (eg. food, travel, clothing, etc.)")
             description = st.text_area("Description (optional)")
             submitted = st.form_submit_button("Add Expense")
             if submitted:
