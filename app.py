@@ -278,18 +278,6 @@ def get_db_engine():
     connection_port = 6543 # As per user's manual change observed
     connection_string = f"postgresql://postgres.xupvavqdvunalnpxqlxa:{db_password_raw}@{db_host_raw}:6543/postgres"
 
-    # Debugging prints
-    print("--- Database Connection Details ---")
-    print(f"Raw Host from secrets: {db_host_raw}")
-    print(f"Encoded Host: {encoded_db_host}")
-    print(f"Port from secrets (db_port): {db_port_secret}")
-    print(f"Port used in connection string: {connection_port}")
-    print(f"Password from secrets: *** MASKED ***")
-    print(f"Encoded Password: *** MASKED ***")
-    # Print the final connection string (masking password for safety)
-    masked_connection_string = f"postgresql://postgres:*****@{encoded_db_host}:{connection_port}/postgres"
-    print(f"Attempting Connection With String: {masked_connection_string}")
-    print("---------------------------------")
 
     try:
         print(f"DEBUG: About to create engine with string: {connection_string}") # Full string for debugging
@@ -667,4 +655,4 @@ elif st.session_state.get('authentication_status'):
 
 # --- Footer ---
 st.markdown("---")
-st.caption("Expense Tracker v2.0 - Powered by Supabase & bcrypt")
+st.caption("Expense Tracker v1.0 - Exploring AI @ Shorthills AI 💛")
