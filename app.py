@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 import os
 import re
 import time
+import uuid  # Added for token generation
 from langchain_experimental.agents import create_pandas_dataframe_agent
 from langchain_cohere import ChatCohere
 from langchain.prompts import PromptTemplate
@@ -21,9 +22,9 @@ from langchain_community.utilities import SQLDatabase
 from sqlalchemy import create_engine
 import urllib.parse
 import psycopg2
+from datetime import timezone
 
 # --- Database Setup (Supabase) ---
-
 SUPABASE_URL = st.secrets.get("supabase", {}).get("url")
 SUPABASE_KEY = st.secrets.get("supabase", {}).get("key")
 
@@ -60,7 +61,6 @@ def get_user_expenses(user_id):
 def check_duplicate_expense(user_id, expense_data):
     """Checks if the most recent expense for the user has the same amount and category."""
     try:
-        # Fetch the most recent expense for the user
         response = supabase.table('expense')\
                            .select("category", "amount")\
                            .eq('user_id', user_id)\
@@ -77,7 +77,7 @@ def check_duplicate_expense(user_id, expense_data):
                   f"Previous expense: {previous_expense['category']}, ₹{previous_expense['amount']}. "
                   f"Duplicate: {is_duplicate}")
             return is_duplicate
-        return False  # No previous expense found, so not a duplicate
+        return False
     except Exception as e:
         st.error(f"Error checking for duplicate expense: {e}")
         return False
@@ -142,6 +142,79 @@ def get_user_login_info(username: str):
         st.error(f"Error fetching user login info for {username}: {e}")
         return None
 
+def get_user_by_token(token: str):
+    """Fetches user info by token from the users table."""
+    try:
+        print(f"Querying Supabase for token: {token}")
+        response = supabase.table('users')\
+                         .select('username', 'name')\
+                         .eq('token', token)\
+                         .maybe_single()\
+                         .execute()
+        if response.data:
+            print(f"Found user for token {token}: {response.data}")
+            return response.data
+        else:
+            print(f"No user found for token: {token}")
+            return None
+    except Exception as e:
+        st.error(f"Error fetching user by token: {e}")
+        print(f"Exception in get_user_by_token: {e}")
+        return None
+
+def set_user_token(username: str, token: str, expiry_days: int = 1):
+    """Stores the token and expiry timestamp for the user in Supabase."""
+    try:
+        expires_at = datetime.now(timezone.utc) + timedelta(days=expiry_days)
+        response = supabase.table('users')\
+                           .update({'token': token, 'expires_at': expires_at.isoformat()})\
+                           .eq('username', username)\
+                           .execute()
+        if response.data:
+            print(f"Stored token for {username}: {token}, expires at: {expires_at}")
+        else:
+            print(f"Failed to store token for {username}")
+    except Exception as e:
+        print(f"Error storing token in Supabase: {e}")
+
+def get_user_token(username: str):
+    """Retrieves the user's token from Supabase if it hasn't expired."""
+    try:
+        now = datetime.now(timezone.utc)
+        response = supabase.table('users')\
+                           .select('token', 'expires_at')\
+                           .eq('username', username)\
+                           .maybe_single()\
+                           .execute()
+        if response.data and response.data['token']:
+            expires_at = datetime.fromisoformat(response.data['expires_at'])
+            if now < expires_at:
+                print(f"Found valid token for {username}: {response.data['token']}")
+                return response.data['token']
+            else:
+                print(f"Token for {username} has expired at {expires_at}")
+                # Clear expired token
+                supabase.table('users')\
+                        .update({'token': None, 'expires_at': None})\
+                        .eq('username', username)\
+                        .execute()
+        print(f"No valid token found for {username}")
+        return None
+    except Exception as e:
+        print(f"Error retrieving token from Supabase: {e}")
+        return None
+
+def clear_user_token(username: str):
+    """Clears the user's token from Supabase."""
+    try:
+        response = supabase.table('users')\
+                           .update({'token': None, 'expires_at': None})\
+                           .eq('username', username)\
+                           .execute()
+        print(f"Cleared token for {username}")
+    except Exception as e:
+        print(f"Error clearing token in Supabase: {e}")
+
 def register_user_db(username, name, hashed_password):
     """Adds a new user to the Supabase 'users' table."""
     try:
@@ -149,7 +222,9 @@ def register_user_db(username, name, hashed_password):
         response = supabase.table('users').insert({
             'username': username,
             'name': name,
-            'password': password_to_store
+            'password': password_to_store,
+            'token': None,
+            'expires_at': None  # Initialize expires_at as null
         }).execute()
         if len(response.data) > 0:
             return True
@@ -344,16 +419,17 @@ Only use the following tables: {db.get_usable_table_names()}
 st.set_page_config(page_title="Expense Tracking Bot", layout="wide")
 st.title("💰 Expense Tracking Bot")
 
-# Add JavaScript to disable the "Add Expense" button temporarily after submission
+# --- JavaScript (Simplified, only for button disabling) ---
 st.markdown(
     """
     <script>
+    // Disable "Add Expense" button temporarily after submission
     document.addEventListener('DOMContentLoaded', function() {
         const submitButton = document.querySelector('button[kind="formSubmit"]');
         if (submitButton) {
             submitButton.addEventListener('click', function() {
                 this.disabled = true;
-                setTimeout(() => { this.disabled = false; }, 2000); // Re-enable after 2 seconds
+                setTimeout(() => { this.disabled = false; }, 2000);
             });
         }
     });
@@ -374,17 +450,86 @@ if 'show_register_form' not in st.session_state:
 if 'expense_data' not in st.session_state:
     st.session_state['expense_data'] = None
 if 'pending_expense' not in st.session_state:
-    st.session_state['pending_expense'] = None  # Store expense data awaiting confirmation
+    st.session_state['pending_expense'] = None
 if 'show_confirmation' not in st.session_state:
-    st.session_state['show_confirmation'] = False  # Flag to show confirmation prompt
+    st.session_state['show_confirmation'] = False
+if 'token' not in st.session_state:
+    st.session_state['token'] = None
 
+# --- Check for Token and Auto-Login ---
+# --- Check for Token and Auto-Login ---
+# Try to retrieve the token from Supabase
+if not st.session_state.get('authentication_status'):
+    try:
+        # Query users with a non-null token
+        users_with_tokens = supabase.table('users')\
+                                    .select('username', 'token', 'expires_at')\
+                                    .neq('token', None)\
+                                    .execute()
+        now = datetime.now(timezone.utc)
+        token = None
+        username = None
+        for user in users_with_tokens.data:
+            expires_at_raw = user['expires_at']
+            expires_at = None
+            if expires_at_raw is None:
+                print(f"No expires_at for user {user['username']}, skipping.")
+                continue
+            # Check if expires_at is already a datetime object
+            if isinstance(expires_at_raw, datetime):
+                expires_at = expires_at_raw
+            else:
+                # Assume it's a string and try to parse it
+                try:
+                    expires_at = datetime.fromisoformat(str(expires_at_raw).replace('Z', '+00:00'))
+                except ValueError as e:
+                    print(f"Error parsing expires_at for user {user['username']}: {e}, value: {expires_at_raw}")
+                    continue
+            # Ensure expires_at is timezone-aware
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            if now < expires_at:
+                token = user['token']
+                username = user['username']
+                break
+            else:
+                print(f"Token for user {user['username']} expired at {expires_at}, skipping.")
+        if token and username:
+            st.session_state['token'] = token
+            print(f"Retrieved token from Supabase for {username}: {token}")
+        else:
+            print("No valid token found for auto-login.")
+    except Exception as e:
+        print(f"Error querying users for auto-login: {e}")
+        st.error(f"Failed to check for existing login session: {e}")
+
+# If not logged in, check for token and attempt auto-login
+if not st.session_state.get('authentication_status') and st.session_state.get('token'):
+    print(f"Attempting auto-login with token: {st.session_state['token']}")
+    user_info = get_user_by_token(st.session_state['token'])
+    if user_info:
+        print(f"Token validation successful. User info: {user_info}")
+        st.session_state['authentication_status'] = True
+        st.session_state['username'] = user_info['username']
+        st.session_state['name'] = user_info['name']
+        st.session_state['expense_data'] = None
+        st.session_state['pending_expense'] = None
+        st.session_state['show_confirmation'] = False
+        print(f"Auto-login successful for username: {user_info['username']} using token: {st.session_state['token']}")
+        st.rerun()
+    else:
+        print("Token validation failed. Clearing token.")
+        st.session_state['token'] = None
+        if username:
+            clear_user_token(username)
+    
 # --- Still use Authenticator for Logout ---
 auth_users = get_users_for_authenticator()
 authenticator = stauth.Authenticate(
     auth_users,
     "expense_tracker_cookie_bcrypt",
     st.secrets.get("auth", {}).get("authenticator_key", "local_dev_key_bcrypt"),
-    30
+    1
 )
 
 # --- Login/Register Flow Management ---
@@ -395,6 +540,9 @@ def go_to_login():
     st.session_state.show_register_form = False
 
 def perform_logout():
+    if st.session_state.get('username'):
+        clear_user_token(st.session_state['username'])
+    st.session_state['token'] = None
     authenticator.logout("Logout", "sidebar")
     st.session_state['authentication_status'] = None
     st.session_state['name'] = None
@@ -421,6 +569,10 @@ if not st.session_state.get('authentication_status'):
                     if user_info and 'password' in user_info:
                         stored_hashed_password = user_info['password']
                         if bcrypt.checkpw(login_password.encode('utf-8'), stored_hashed_password.encode('utf-8')):
+                            # Generate and store token in Supabase
+                            token = str(uuid.uuid4())
+                            set_user_token(login_username, token, expiry_days=1)
+                            st.session_state['token'] = token
                             st.session_state['authentication_status'] = True
                             st.session_state['name'] = user_info.get('name', login_username)
                             st.session_state['username'] = login_username
@@ -483,7 +635,6 @@ elif st.session_state.get('authentication_status'):
 
     if page == "Home":
         st.header(f"{name}'s Dashboard")
-        # Clear session state expense data to force fresh fetch
         st.session_state['expense_data'] = None
         df_user = get_user_expenses(user_id)
         st.session_state['expense_data'] = df_user
@@ -528,14 +679,12 @@ elif st.session_state.get('authentication_status'):
                         parsed_data['description'] = description
                         expense_record = update_excel_data_prep(parsed_data)
 
-                        # Check for duplicates based on amount and category
                         if check_duplicate_expense(user_id, expense_record):
                             st.session_state['pending_expense'] = expense_record
                             st.session_state['show_confirmation'] = True
                             st.warning(f"Duplicate expense detected! The most recent expense has the same category ({expense_record['category']}) "
                                        f"and amount (₹{expense_record['amount']}). Do you want to save this expense?")
                         else:
-                            # No duplicate, save directly
                             if add_expense_db(user_id, expense_record):
                                 st.success("Expense saved!")
                                 time.sleep(1)
@@ -543,14 +692,13 @@ elif st.session_state.get('authentication_status'):
                                 st.session_state['show_confirmation'] = False
                                 st.rerun()
                             else:
-                                pass  # Error message already shown in add_expense_db
+                                pass
                     except Exception as e:
                         st.error(f"Error processing or saving expense: {e}")
                         st.error("Please check your input or try rephrasing.")
                 else:
                     st.error("Please enter expense details.")
 
-        # Display confirmation buttons if a duplicate is detected
         if st.session_state.get('show_confirmation', False) and st.session_state.get('pending_expense'):
             col1, col2 = st.columns(2)
             with col1:
@@ -676,4 +824,4 @@ elif st.session_state.get('authentication_status'):
 
 # --- Footer ---
 st.markdown("---")
-st.caption("Expense Tracker v2.4 - Powered by Supabase & bcrypt")
+st.caption("Expense Tracker v2.11 - Powered by Supabase & bcrypt")
