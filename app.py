@@ -2,10 +2,9 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from datetime import datetime, timedelta
-import os
 import re
 import time
-import uuid  # Added for token generation
+import uuid
 from langchain_experimental.agents import create_pandas_dataframe_agent
 from langchain_cohere import ChatCohere
 from langchain.prompts import PromptTemplate
@@ -16,13 +15,8 @@ import yaml
 from yaml.loader import SafeLoader
 from supabase import create_client, Client
 import bcrypt
-from langchain.agents import create_sql_agent
-from langchain.agents.agent_toolkits import SQLDatabaseToolkit
-from langchain_community.utilities import SQLDatabase
-from sqlalchemy import create_engine
-import urllib.parse
-import psycopg2
 from datetime import timezone
+from vanna_config import initialize_vanna  # Import Vanna AI setup
 
 # --- Database Setup (Supabase) ---
 SUPABASE_URL = st.secrets.get("supabase", {}).get("url")
@@ -224,7 +218,7 @@ def register_user_db(username, name, hashed_password):
             'name': name,
             'password': password_to_store,
             'token': None,
-            'expires_at': None  # Initialize expires_at as null
+            'expires_at': None
         }).execute()
         if len(response.data) > 0:
             return True
@@ -336,84 +330,11 @@ def update_excel_data_prep(data):
         "description": description
     }
 
-# --- SQL Agent Setup ---
-def get_db_engine():
-    """Creates SQLAlchemy engine for Supabase connection."""
-    db_host_raw = st.secrets.get("supabase", {}).get("db_host")
-    db_port_secret = st.secrets.get("supabase", {}).get("db_port")
-    db_password_raw = st.secrets.get("supabase", {}).get("db_password")
-
-    if not db_host_raw or not db_port_secret or not db_password_raw:
-        st.error("Database host, port, or password not found in secrets.")
-        return None
-
-    try:
-        encoded_password = urllib.parse.quote_plus(db_password_raw)
-        encoded_db_host = urllib.parse.quote_plus(db_host_raw)
-    except Exception as e:
-        st.error(f"Failed to URL-encode database credentials or host: {e}")
-        return None
-
-    connection_port = 6543
-    connection_string = f"postgresql://postgres.xupvavqdvunalnpxqlxa:{db_password_raw}@{db_host_raw}:6543/postgres"
-
-    try:
-        engine = create_engine(connection_string)
-        connection = engine.connect()
-        connection.close()
-        print("Database connection successful!")
-        return engine
-    except psycopg2.OperationalError as op_err:
-        st.error(f"Failed to create database engine (OperationalError): {op_err}")
-        return None
-    except Exception as e:
-        st.error(f"Failed to create database engine: {e}")
-        return None
-
+# --- Vanna AI Setup ---
 @st.cache_resource
-def load_sql_agent_for_user(user_id: str):
-    """Loads or creates the SQL agent for the given user."""
-    engine = get_db_engine()
-    if not engine:
-        return None
-
-    db = SQLDatabase(engine, include_tables=['expense'], sample_rows_in_table_info=2)
-
-    sql_prefix = f"""
-You are an agent designed to interact with a SQL database containing expense data for multiple users.
-Given an input question, create a syntactically correct PostgreSQL query to run, then look at the results of the query and return the answer.
-Unless the user specifies a specific number of examples they wish to obtain, always limit your query to at most 10 results.
-You can order the results by a relevant column to return the most interesting examples in the database.
-Never query for all the columns from a specific table, only ask for the relevant columns given the question.
-
-You have access to the following tables: {db.get_usable_table_names()}
-
-**VERY IMPORTANT**: You MUST filter your query based on the user making the request. The current user's ID is '{user_id}'.
-**ALL queries to the 'expense' table MUST include `WHERE user_id = '{user_id}'`**.
-
-For example:
-Question: How much did I spend on food last week?
-SQLQuery: SELECT sum(amount) FROM expense WHERE category = 'food' AND date >= current_date - interval '7 days' AND user_id = '{user_id}';
-
-Question: Show my last 3 expenses
-SQLQuery: SELECT date, category, amount, description FROM expense WHERE user_id = '{user_id}' ORDER BY date DESC, time DESC LIMIT 3;
-
-Only use the following tables: {db.get_usable_table_names()}
-"""
-
-    try:
-        toolkit = SQLDatabaseToolkit(db=db, llm=llm)
-        agent_executor = create_sql_agent(
-            llm=llm,
-            toolkit=toolkit,
-            verbose=True,
-            prefix=sql_prefix,
-            handle_parsing_errors=True
-        )
-        return agent_executor
-    except Exception as e:
-        st.error(f"Failed to create SQL query agent: {e}")
-        return None
+def load_vanna_for_user(user_id: str):
+    """Loads or creates the Vanna AI instance for the given user."""
+    return initialize_vanna(user_id)
 
 # --- Streamlit App ---
 st.set_page_config(page_title="Expense Tracking Bot", layout="wide")
@@ -457,11 +378,8 @@ if 'token' not in st.session_state:
     st.session_state['token'] = None
 
 # --- Check for Token and Auto-Login ---
-# --- Check for Token and Auto-Login ---
-# Try to retrieve the token from Supabase
 if not st.session_state.get('authentication_status'):
     try:
-        # Query users with a non-null token
         users_with_tokens = supabase.table('users')\
                                     .select('username', 'token', 'expires_at')\
                                     .neq('token', None)\
@@ -475,17 +393,14 @@ if not st.session_state.get('authentication_status'):
             if expires_at_raw is None:
                 print(f"No expires_at for user {user['username']}, skipping.")
                 continue
-            # Check if expires_at is already a datetime object
             if isinstance(expires_at_raw, datetime):
                 expires_at = expires_at_raw
             else:
-                # Assume it's a string and try to parse it
                 try:
                     expires_at = datetime.fromisoformat(str(expires_at_raw).replace('Z', '+00:00'))
                 except ValueError as e:
                     print(f"Error parsing expires_at for user {user['username']}: {e}, value: {expires_at_raw}")
                     continue
-            # Ensure expires_at is timezone-aware
             if expires_at.tzinfo is None:
                 expires_at = expires_at.replace(tzinfo=timezone.utc)
             if now < expires_at:
@@ -503,7 +418,6 @@ if not st.session_state.get('authentication_status'):
         print(f"Error querying users for auto-login: {e}")
         st.error(f"Failed to check for existing login session: {e}")
 
-# If not logged in, check for token and attempt auto-login
 if not st.session_state.get('authentication_status') and st.session_state.get('token'):
     print(f"Attempting auto-login with token: {st.session_state['token']}")
     user_info = get_user_by_token(st.session_state['token'])
@@ -522,7 +436,7 @@ if not st.session_state.get('authentication_status') and st.session_state.get('t
         st.session_state['token'] = None
         if username:
             clear_user_token(username)
-    
+
 # --- Still use Authenticator for Logout ---
 auth_users = get_users_for_authenticator()
 authenticator = stauth.Authenticate(
@@ -569,7 +483,6 @@ if not st.session_state.get('authentication_status'):
                     if user_info and 'password' in user_info:
                         stored_hashed_password = user_info['password']
                         if bcrypt.checkpw(login_password.encode('utf-8'), stored_hashed_password.encode('utf-8')):
-                            # Generate and store token in Supabase
                             token = str(uuid.uuid4())
                             set_user_token(login_username, token, expiry_days=1)
                             st.session_state['token'] = token
@@ -725,21 +638,31 @@ elif st.session_state.get('authentication_status'):
         st.header("Query Expenses")
         query = st.text_input("Ask about your expenses (e.g., 'Total spent on food last month?')", key="query_input")
 
-        agent = load_sql_agent_for_user(user_id)
+        vanna = load_vanna_for_user(user_id)
 
-        if agent:
+        if vanna:
             st.write("### Example Queries:")
             example_queries = [
-                "What is the total amount spent on clothing and technology",
-                "What is the total amount spent in April 2025",
-                "Show all expenses for the month of September 2025",
-                "get all the expense with amount greater than 500",
-                "fetch all the rows where category is food",
-                "fetch all the records with category technology",
-                "fetch the names of different categories",
-                "Show the most expensive expense",
-                "How many expenses are there in each category?",
-                "What is the total amount spent on travel"
+                "What is the total amount I spent on food?",
+                "Show my last 5 expenses.",
+                "How much did I spend in May 2025?",
+                "What are my expenses for travel in 2025?",
+                "What is the average amount I spent on electronics?",
+                "Show all expenses with an amount greater than 1000.",
+                "How many expenses do I have in each category?",
+                "What is the most expensive purchase I made?",
+                "Show my expenses for clothing on 2025-05-26.",
+                "What is the total amount I spent on travel and food combined?",
+                "Show my expenses between 2025-05-01 and 2025-05-15.",
+                "What are the categories where I spent more than 500 in total?",
+                "Show my expenses with the description containing 'ticket'.",
+                "What is the least amount I spent on gym expenses?",
+                "How much did I spend on electronics in the last 7 days?",
+                "Show my top 3 most frequent categories by number of expenses.",
+                "What are my expenses on 2025-05-27 after 12:00 PM?",
+                "What is the total amount I spent on items with no category (category is 'nothing')?",
+                "Show my expenses sorted by amount in ascending order.",
+                "What is the total amount I spent each month in 2025?"
             ]
             for q in example_queries:
                 st.write(f"- {q}")
@@ -747,15 +670,39 @@ elif st.session_state.get('authentication_status'):
             if query:
                 with st.spinner("Processing your query..."):
                     try:
-                        response = agent.invoke({"input": query})
-                        answer = response.get('output', "Sorry, I couldn't process that.")
-                        st.write("Answer:")
-                        st.markdown(answer.strip())
+                        # Generate SQL query using Vanna AI
+                        sql_query = vanna.generate_sql(
+                            question=f"{query} for user_id {user_id}",
+                            allow_domain_knowledge=True
+                        )
+                        print(f"Generated SQL query: {sql_query}")
+
+                        # Ensure user_id filter is included for security
+                        if "user_id" not in sql_query.lower():
+                            sql_query = sql_query.replace("FROM expense", f"FROM expense WHERE user_id = '{user_id}'")
+                            print(f"Modified SQL query with user_id filter: {sql_query}")
+
+                        # Execute the query
+                        df_result = vanna.run_sql(sql_query)
+
+                        if isinstance(df_result, pd.DataFrame) and not df_result.empty:
+                            st.write("Answer:")
+                            st.dataframe(df_result)
+                            # Summarize the result if applicable
+                            if df_result.shape[1] == 1 and pd.api.types.is_numeric_dtype(df_result.iloc[:, 0]):
+                                total = df_result.iloc[:, 0].sum()
+                                st.write(f"**Total: ₹{total:.2f}**")
+                            elif df_result.shape[0] == 1:
+                                st.write(f"**Result: {df_result.to_string(index=False)}**")
+                        else:
+                            st.write("No results found for your query.")
                     except Exception as e:
-                        st.error(f"Error querying expenses: {e}")
-                        st.warning("The agent might not understand the query or there could be an issue accessing the data. Try rephrasing or check logs.")
+                        st.error(f"Error executing query: {e}")
+                        st.warning("Try rephrasing your query or check the database connection.")
+            else:
+                st.info("Enter a query to get started.")
         else:
-            st.warning("Could not initialize the query agent. Check database connection and secrets.")
+            st.warning("Could not initialize Vanna AI. Check database connection and secrets.")
 
     elif page == "Monthly Summary":
         st.header("Monthly Summary")
@@ -824,4 +771,4 @@ elif st.session_state.get('authentication_status'):
 
 # --- Footer ---
 st.markdown("---")
-st.caption("Expense Tracker v2.11 - Powered by Supabase & bcrypt")
+st.caption("Expense Tracker v2.11 - Made with ❤️ @ Shorthills AI")
