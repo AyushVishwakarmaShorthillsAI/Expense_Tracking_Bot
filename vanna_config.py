@@ -5,7 +5,7 @@ import urllib.parse
 import streamlit as st
 
 def initialize_vanna(user_id: str) -> VannaBase:
-    """Initialize Vanna AI with Supabase connection."""
+    """Initialize Vanna AI with Supabase connection without training."""
     try:
         # Retrieve Supabase credentials from Streamlit secrets
         db_host_raw = st.secrets.get("supabase", {}).get("db_host")
@@ -21,7 +21,7 @@ def initialize_vanna(user_id: str) -> VannaBase:
         # Retrieve Vanna AI API key and associated email
         vanna_secrets = st.secrets.get("vanna", {})
         api_key = vanna_secrets.get("api_key")
-        email = vanna_secrets.get("email")  # Add email to your secrets
+        email = vanna_secrets.get("email")
 
         if not api_key or not email:
             st.error("Vanna AI API key or email not found in secrets.")
@@ -39,7 +39,7 @@ def initialize_vanna(user_id: str) -> VannaBase:
         vn = VannaDefault(
             model="command",
             api_key=api_key,
-            config={'email': email}  # Pass email in config to resolve the error
+            config={'email': email}
         )
 
         # Connect to the database

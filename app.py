@@ -1,5 +1,7 @@
 import streamlit as st
 import pandas as pd
+import requests
+import json
 import plotly.express as px
 from datetime import datetime, timedelta
 import re
@@ -42,8 +44,8 @@ def get_user_expenses(user_id):
             df = pd.DataFrame(response.data)
             df['date'] = pd.to_datetime(df['date']).dt.date
             df['amount'] = pd.to_numeric(df['amount'])
-            print(f"Fetched {len(df)} expenses for user_id: {user_id} at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-            print(f"Most recent expense: {df.iloc[0].to_dict() if not df.empty else 'None'}")
+            # print(f"Fetched {len(df)} expenses for user_id: {user_id} at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            # print(f"Most recent expense: {df.iloc[0].to_dict() if not df.empty else 'None'}")
             return df
         else:
             print(f"No expenses found for user_id: {user_id} at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
@@ -563,7 +565,7 @@ elif st.session_state.get('authentication_status'):
             existing_display_cols = [col for col in display_cols if col in df_display.columns]
             df_display_sorted = df_display.sort_values(by=['date', 'time'], ascending=False)
             st.dataframe(df_display_sorted.head(5)[existing_display_cols])
-            print(f"Displayed recent expenses: {df_display_sorted.head(5)[existing_display_cols].to_dict('records')}")
+            # print(f"Displayed recent expenses: {df_display_sorted.head(5)[existing_display_cols].to_dict('records')}")
             st.subheader("Category-Wise Spending")
             df_user['category'] = df_user['category'].fillna('other').astype(str)
             grouped = df_user.groupby("category")["amount"].sum().reset_index()
@@ -634,35 +636,81 @@ elif st.session_state.get('authentication_status'):
                     st.session_state['show_confirmation'] = False
                     st.rerun()
 
+    elif page == "Add Expense":
+        st.header("Add Expense")
+        with st.form("expense_form", clear_on_submit=True):
+            expense_input_text = st.text_input("Amount")
+            category_override = st.text_input("Category (eg. food, travel, clothing, etc.)")
+            description = st.text_area("Description (optional)")
+            submitted = st.form_submit_button("Add Expense")
+
+            if submitted:
+                if expense_input_text:
+                    try:
+                        llm_response = chain.invoke({"query": expense_input_text})
+                        parsed_data = parse_llm_output(llm_response, user_input=expense_input_text)
+                        parsed_data['category'] = category_override.lower().strip() or parsed_data['category']
+                        parsed_data['description'] = description
+                        expense_record = update_excel_data_prep(parsed_data)
+
+                        if check_duplicate_expense(user_id, expense_record):
+                            st.session_state['pending_expense'] = expense_record
+                            st.session_state['show_confirmation'] = True
+                            st.warning(f"Duplicate expense detected! The most recent expense has the same category ({expense_record['category']}) "
+                                       f"and amount (₹{expense_record['amount']}). Do you want to save this expense?")
+                        else:
+                            if add_expense_db(user_id, expense_record):
+                                st.success("Expense saved!")
+                                time.sleep(1)
+                                st.session_state['pending_expense'] = None
+                                st.session_state['show_confirmation'] = False
+                                st.rerun()
+                            else:
+                                pass
+                    except Exception as e:
+                        st.error(f"Error processing or saving expense: {e}")
+                        st.error("Please check your input or try rephrasing.")
+                else:
+                    st.error("Please enter expense details.")
+
+        if st.session_state.get('show_confirmation', False) and st.session_state.get('pending_expense'):
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("Yes, save it"):
+                    if add_expense_db(user_id, st.session_state['pending_expense']):
+                        st.success("Expense saved!")
+                        time.sleep(1)
+                        print("User confirmed saving duplicate expense.")
+                        st.session_state['pending_expense'] = None
+                        st.session_state['show_confirmation'] = False
+                        st.rerun()
+                    else:
+                        st.session_state['pending_expense'] = None
+                        st.session_state['show_confirmation'] = False
+            with col2:
+                if st.button("No, cancel"):
+                    st.info("Expense not saved.")
+                    print("User cancelled saving duplicate expense.")
+                    st.session_state['pending_expense'] = None
+                    st.session_state['show_confirmation'] = False
+                    st.rerun()
+
     elif page == "Query Expenses":
         st.header("Query Expenses")
-        query = st.text_input("Ask about your expenses (e.g., 'Total spent on food last month?')", key="query_input")
 
         vanna = load_vanna_for_user(user_id)
 
         if vanna:
-            st.write("### Example Queries:")
+            # Existing Query Expenses functionality with direct API call
+            query = st.text_input("Ask about your expenses", key="query_input")
+
+            st.write("#### Example Queries:")
             example_queries = [
                 "What is the total amount I spent on food?",
                 "Show my last 5 expenses.",
                 "How much did I spend in May 2025?",
-                "What are my expenses for travel in 2025?",
                 "What is the average amount I spent on electronics?",
                 "Show all expenses with an amount greater than 1000.",
-                "How many expenses do I have in each category?",
-                "What is the most expensive purchase I made?",
-                "Show my expenses for clothing on 2025-05-26.",
-                "What is the total amount I spent on travel and food combined?",
-                "Show my expenses between 2025-05-01 and 2025-05-15.",
-                "What are the categories where I spent more than 500 in total?",
-                "Show my expenses with the description containing 'ticket'.",
-                "What is the least amount I spent on gym expenses?",
-                "How much did I spend on electronics in the last 7 days?",
-                "Show my top 3 most frequent categories by number of expenses.",
-                "What are my expenses on 2025-05-27 after 12:00 PM?",
-                "What is the total amount I spent on items with no category (category is 'nothing')?",
-                "Show my expenses sorted by amount in ascending order.",
-                "What is the total amount I spent each month in 2025?"
             ]
             for q in example_queries:
                 st.write(f"- {q}")
@@ -670,40 +718,69 @@ elif st.session_state.get('authentication_status'):
             if query:
                 with st.spinner("Processing your query..."):
                     try:
-                        # Generate SQL query using Vanna AI
-                        sql_query = vanna.generate_sql(
-                            question=f"{query} for user_id {user_id}",
-                            allow_domain_knowledge=True
-                        )
-                        print(f"Generated SQL query: {sql_query}")
+                        query_with_user_id = f"{query} (user_id: {user_id})"
+                        print(f"Sending query to Vanna AI API: {query_with_user_id}")
+                        response = requests.post(url, headers=headers, data=json.dumps({
+                            "message": query_with_user_id,
+                            "user_email": st.secrets["vanna"]["email"],
+                            "acceptable_responses": ["text", "sql", "end", "error"]
+                        }), stream=True)
+                        response.raise_for_status()
 
-                        # Ensure user_id filter is included for security
-                        if "user_id" not in sql_query.lower():
-                            sql_query = sql_query.replace("FROM expense", f"FROM expense WHERE user_id = '{user_id}'")
-                            print(f"Modified SQL query with user_id filter: {sql_query}")
+                        sql_query = None
+                        for line in response.iter_lines():
+                            if line:
+                                decoded_line = line.decode('utf-8')
+                                if decoded_line.startswith("data:"):
+                                    data_string = decoded_line[5:].strip()
+                                    try:
+                                        data = json.loads(data_string)
+                                        print(f"API response - Type: {data['type']}, Conversation ID: {data['conversation_id']}")
+                                        if data['type'] == 'text':
+                                            print(f"Text: {data['text']}")
+                                        elif data['type'] == 'sql':
+                                            sql_query = data['query']
+                                            print(f"SQL Query: {sql_query}")
+                                            break
+                                        elif data['type'] == 'error':
+                                            raise Exception(f"API Error: {data['error']}")
+                                        elif data['type'] == 'end':
+                                            print("End of stream")
+                                            break
+                                    except json.JSONDecodeError as e:
+                                        print(f"Error decoding JSON: {e} - Original data: {data_string}")
 
-                        # Execute the query
-                        df_result = vanna.run_sql(sql_query)
-
-                        if isinstance(df_result, pd.DataFrame) and not df_result.empty:
-                            st.write("Answer:")
-                            st.dataframe(df_result)
-                            # Summarize the result if applicable
-                            if df_result.shape[1] == 1 and pd.api.types.is_numeric_dtype(df_result.iloc[:, 0]):
-                                total = df_result.iloc[:, 0].sum()
-                                st.write(f"**Total: ₹{total:.2f}**")
-                            elif df_result.shape[0] == 1:
-                                st.write(f"**Result: {df_result.to_string(index=False)}**")
+                        if sql_query:
+                            if "user_id" not in sql_query.lower():
+                                sql_query = sql_query.replace("FROM expense", f"FROM expense WHERE user_id = '{user_id}'")
+                                print(f"Modified SQL query with user_id filter: {sql_query}")
+                            
+                            df_result = vanna.run_sql(sql_query)
+                            if isinstance(df_result, pd.DataFrame) and not df_result.empty:
+                                st.write("Answer:")
+                                st.dataframe(df_result)
+                                if df_result.shape[1] == 1 and pd.api.types.is_numeric_dtype(df_result.iloc[:, 0]):
+                                    total = df_result.iloc[:, 0].sum()
+                                    st.write(f"**Total: ₹{total:.2f}**")
+                                elif df_result.shape[0] == 1:
+                                    st.write(f"**Result: {df_result.to_string(index=False)}**")
+                            else:
+                                st.write("No results found for your query.")
+                                print(f"No results returned for SQL query: {sql_query}")
                         else:
-                            st.write("No results found for your query.")
+                            st.error("Vanna AI did not return a valid SQL query.")
+                            print("API did not return a valid SQL response.")
+                    except requests.exceptions.RequestException as e:
+                        st.error(f"API error: {e}")
+                        print(f"API request error: {e}")
                     except Exception as e:
                         st.error(f"Error executing query: {e}")
-                        st.warning("Try rephrasing your query or check the database connection.")
+                        print(f"Exception during query execution: {e}")
             else:
                 st.info("Enter a query to get started.")
         else:
             st.warning("Could not initialize Vanna AI. Check database connection and secrets.")
-
+                    
     elif page == "Monthly Summary":
         st.header("Monthly Summary")
         df_user = get_user_expenses(user_id)
