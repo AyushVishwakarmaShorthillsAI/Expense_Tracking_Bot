@@ -636,72 +636,20 @@ elif st.session_state.get('authentication_status'):
                     st.session_state['show_confirmation'] = False
                     st.rerun()
 
-    elif page == "Add Expense":
-        st.header("Add Expense")
-        with st.form("expense_form", clear_on_submit=True):
-            expense_input_text = st.text_input("Amount")
-            category_override = st.text_input("Category (eg. food, travel, clothing, etc.)")
-            description = st.text_area("Description (optional)")
-            submitted = st.form_submit_button("Add Expense")
-
-            if submitted:
-                if expense_input_text:
-                    try:
-                        llm_response = chain.invoke({"query": expense_input_text})
-                        parsed_data = parse_llm_output(llm_response, user_input=expense_input_text)
-                        parsed_data['category'] = category_override.lower().strip() or parsed_data['category']
-                        parsed_data['description'] = description
-                        expense_record = update_excel_data_prep(parsed_data)
-
-                        if check_duplicate_expense(user_id, expense_record):
-                            st.session_state['pending_expense'] = expense_record
-                            st.session_state['show_confirmation'] = True
-                            st.warning(f"Duplicate expense detected! The most recent expense has the same category ({expense_record['category']}) "
-                                       f"and amount (₹{expense_record['amount']}). Do you want to save this expense?")
-                        else:
-                            if add_expense_db(user_id, expense_record):
-                                st.success("Expense saved!")
-                                time.sleep(1)
-                                st.session_state['pending_expense'] = None
-                                st.session_state['show_confirmation'] = False
-                                st.rerun()
-                            else:
-                                pass
-                    except Exception as e:
-                        st.error(f"Error processing or saving expense: {e}")
-                        st.error("Please check your input or try rephrasing.")
-                else:
-                    st.error("Please enter expense details.")
-
-        if st.session_state.get('show_confirmation', False) and st.session_state.get('pending_expense'):
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("Yes, save it"):
-                    if add_expense_db(user_id, st.session_state['pending_expense']):
-                        st.success("Expense saved!")
-                        time.sleep(1)
-                        print("User confirmed saving duplicate expense.")
-                        st.session_state['pending_expense'] = None
-                        st.session_state['show_confirmation'] = False
-                        st.rerun()
-                    else:
-                        st.session_state['pending_expense'] = None
-                        st.session_state['show_confirmation'] = False
-            with col2:
-                if st.button("No, cancel"):
-                    st.info("Expense not saved.")
-                    print("User cancelled saving duplicate expense.")
-                    st.session_state['pending_expense'] = None
-                    st.session_state['show_confirmation'] = False
-                    st.rerun()
-
     elif page == "Query Expenses":
         st.header("Query Expenses")
 
         vanna = load_vanna_for_user(user_id)
 
         if vanna:
-            # Existing Query Expenses functionality with direct API call
+            # Define the API URL and headers
+            url = "https://bigquery.vanna.ai/api/v0/chat_sse"
+            headers = {
+                "Content-Type": "application/json",
+                "VANNA-API-KEY": st.secrets["vanna"]["api_key"]
+            }
+
+            # Query Expenses functionality with direct API call
             query = st.text_input("Ask about your expenses", key="query_input")
 
             st.write("#### Example Queries:")
