@@ -21,7 +21,7 @@ This is a Streamlit web application for tracking personal expenses, powered by S
 
 2.  **Install dependencies:**
 
-    Ensure you have Python installed. Install the required libraries using pip. Make sure you have a `requirements.txt` file with all necessary libraries, including `streamlit`, `pandas`, `plotly`, `langchain`, `langchain-cohere`, `python-dotenv`, `dateparser`, `streamlit-authenticator`, `PyYAML`, `supabase`, `bcrypt`, `sqlalchemy`, `psycopg2-binary` (or `psycopg2`), `vanna`, and `sentence-transformers`.
+    Ensure you have Python installed. Install the required libraries using pip. Make sure you have a `requirements.txt` file with all necessary libraries, including `streamlit`, `pandas`, `plotly`, `langchain`, `python-dotenv`, `dateparser`, `streamlit-authenticator`, `PyYAML`, `supabase`, `bcrypt`, `sqlalchemy`, `psycopg2-binary` (or `psycopg2`), `vanna`, and `sentence-transformers`.
 
     ```bash
     pip install -r requirements.txt
@@ -31,42 +31,49 @@ This is a Streamlit web application for tracking personal expenses, powered by S
 
     *   Create a new project on [Supabase](https://supabase.com/).
     *   Set up your database schema, including the `expense` and `users` tables with appropriate columns and relationships as used in `app.py`. You'll also need Row Level Security (RLS) policies enabled and configured for the `expense` table to ensure users can only access their own data (based on `user_id`).
-    *   Obtain your Supabase URL, Anon Key, Database Host, Port, and Password.
+    *   Obtain your Supabase URL, Anon Key, Database Host, Port, Database Name, User, and Password.
 
 4.  **Configure Credentials (Streamlit Secrets):**
 
     Create a `.streamlit` directory in the root of your project if it doesn't exist. Inside `.streamlit`, create a `secrets.toml` file.
 
-    Add the following credentials, replacing the placeholder values with your actual Supabase and authentication details:
+    Add the following credentials, replacing the placeholder values with your actual details:
 
     ```toml
     [supabase]
     url = "YOUR_SUPABASE_URL"
     key = "YOUR_SUPABASE_ANON_KEY"
-    db_host = "YOUR_SUPABASE_DATABASE_HOST" # e.g., db.xxxxxxxxxxxxxxxx.supabase.co
+    user = "YOUR_SUPABASE_DB_USER" # e.g., postgres or postgres.<project_ref>
+    db_host = "YOUR_SUPABASE_DATABASE_HOST" # e.g., db.xxxxxxxxxxxxxxxx.supabase.co or aws-0-<region>.pooler.supabase.com
     db_port = "YOUR_SUPABASE_DATABASE_PORT" # e.g., 5432 for Direct Connection, 6543 for Pooler
     db_password = "YOUR_SUPABASE_DATABASE_PASSWORD"
+    database = "YOUR_SUPABASE_DATABASE_NAME" # e.g., postgres
 
     [auth]
     authenticator_key = "A_RANDOM_SECRET_KEY_FOR_AUTHENTICATOR"
 
-    [cohere]
-    api_key = "YOUR_COHERE_API_KEY"
+    [vanna]
+    api_key = "YOUR_VANNA_API_KEY"
+    email = "YOUR_VANNA_EMAIL"
     ```
 
     *   `YOUR_SUPABASE_URL`: Found in your Supabase Project Settings -> API.
     *   `YOUR_SUPABASE_ANON_KEY`: Found in your Supabase Project Settings -> API.
+    *   `YOUR_SUPABASE_DB_USER`: The username for your database connection. For the connection pooler, this is typically `postgres.<project_ref>`.
     *   `YOUR_SUPABASE_DATABASE_HOST`: Found in your Supabase Project Settings -> Database -> Connection info (Direct Connection or Pooler). Use the Pooler host if you intend to use the pooler.
     *   `YOUR_SUPABASE_DATABASE_PORT`: Found in your Supabase Project Settings -> Database -> Connection info (5432 for Direct, 6543 for Pooler). Match this with the host.
     *   `YOUR_SUPABASE_DATABASE_PASSWORD`: The password you set for the `postgres` user.
+    *   `YOUR_SUPABASE_DATABASE_NAME`: The name of your database, usually `postgres`.
     *   `authenticator_key`: A random string used by Streamlit Authenticator for cookie signing. Generate a strong, random string.
-    *   `YOUR_COHERE_API_KEY`: Your API key for Cohere, used by the LLM.
 
-5.  **Configure Vanna AI:**
+5.  **Configure Vanna AI (Vanna Cloud):**
 
-    The current `app.py` configures Vanna to use a local sentence transformer model for embeddings (no external key needed for embeddings) and your existing Cohere LLM. Ensure your Cohere API key is correctly set in `secrets.toml` as mentioned above.
+    The project is configured to use [Vanna Cloud](https://vanna.ai/). You will need a Vanna Cloud API key and the associated email address.
 
-    If you choose to use a different Vanna model that requires other keys (e.g., OpenAI for `VannaDefault`), you would need to configure those keys similarly in `secrets.toml` or as environment variables as required by that specific Vanna model.
+    *   `YOUR_VANNA_API_KEY`: Your Vanna Cloud API key, obtained from the Vanna Cloud dashboard.
+    *   `YOUR_VANNA_EMAIL`: The email address associated with your Vanna Cloud account.
+
+    Configure these in the `[vanna]` section of your `.streamlit/secrets.toml` file as shown in the example above.
 
 ## Running the App
 
@@ -76,4 +83,4 @@ To run the Streamlit application, navigate to the project directory in your term
 streamlit run app.py
 ```
 
-The app should open in your web browser. 
+The app should open in your web browser.

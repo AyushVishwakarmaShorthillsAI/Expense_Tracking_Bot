@@ -19,6 +19,7 @@ from supabase import create_client, Client
 import bcrypt
 from datetime import timezone
 from vanna_config import initialize_vanna  # Import Vanna AI setup
+import vanna as vn # Import vanna
 
 # --- Database Setup (Supabase) ---
 SUPABASE_URL = st.secrets.get("supabase", {}).get("url")
@@ -333,6 +334,23 @@ def update_excel_data_prep(data):
     }
 
 # --- Vanna AI Setup ---
+@st.cache_resource(ttl=3600) # Cache the Vanna instance for 1 hour
+def setup_vanna():
+    """Sets up and configures the Vanna AI client."""
+    try:
+        # Get Vanna credentials from Streamlit secrets
+        vanna_api_key = st.secrets.get("vanna", {}).get("api_key")
+        vanna_email = st.secrets.get("vanna", {}).get("email")
+
+        if not vanna_api_key or not vanna_email:
+            st.error("Vanna API key or email not found in secrets. Please add [vanna] api_key and email.")
+            return None
+
+        # Initialize Vanna Client for Vanna Cloud
+        vanna_client = vn.Client(model='YOUR_VANNA_MODEL_NAME', api_key=vanna_api_key, email=vanna_email)
+
+        # Get the database engine
+        engine = get_db_engine() # Reuse the get_db_engine function
 @st.cache_resource
 def load_vanna_for_user(user_id: str):
     """Loads or creates the Vanna AI instance for the given user."""
