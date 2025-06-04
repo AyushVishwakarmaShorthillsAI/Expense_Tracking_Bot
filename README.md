@@ -1,6 +1,6 @@
 # Expense Tracking Bot
 
-This is a Streamlit web application for tracking personal expenses, powered by Supabase as the database backend and utilizing AI for natural language querying.
+This is a Streamlit web application for tracking personal expenses on the go, powered by Supabase as the database backend and utilizing Vanna AI for natural language querying.
 
 ## Features:
 
